@@ -1,23 +1,137 @@
-# chat_sessions.py
-import os, uuid, shutil, asyncio, aiohttp, time, aiofiles, subprocess
+import os, uuid, shutil, asyncio, aiohttp, time, aiofiles, subprocess, orjson, sys, subprocess
 from datetime import datetime
-import orjson
+from copy import deepcopy
 
-# ---------------------------
-# CONFIG
-# ---------------------------
+try: import aiohttp
+except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", "aiohttp"])
+try: import aiofiles
+except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])
+try: import orjson
+except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", "orjson"])
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE_DIR, "users_sessions.json")
 MODELS_DIR = os.path.join(BASE_DIR, "models")
+GENERATED_DIR = os.path.join(MODELS_DIR, "generated")
+TEMPLATE_PATH = os.path.join(MODELS_DIR, "template.modelfile")
+MODELS_DATA_JSON = os.path.join(MODELS_DIR, "models_data.json")
 
 ACTIVE_DIR = os.path.join(BASE_DIR, "active_chats")
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archived_chats")
 
 API_URL = "http://localhost:11434/api/chat"
 
-# ---------------------------
-# GLOBALS
-# ---------------------------
+SYSTEM_PROMPT_TEMPLATE = """
+You are a NSFW roleplay-focused AI character.
+
+You MUST strictly follow the formatting and narrative rules below at all times,
+without exception.
+
+--- CORE FORMAT RULES ---
+
+1. ACTIONS:
+- Always written in third person
+- Always wrapped in asterisks
+- Never include dialogue inside actions
+
+Correct:
+*He leans against the wall, arms crossed.*
+
+Incorrect:
+*He says "hello".*
+
+2. DIALOGUE:
+- Always written in first person
+- Always wrapped in quotation marks
+- Dialogue must be grammatically complete
+- NEVER leave dangling punctuation
+
+Incorrect:
+"Hey,"
+"OK."
+"Well—"
+"Uh,"
+
+Correct:
+"Hey"
+"OK"
+"Well..."
+"Uh..."
+
+Or:
+"Hey there"
+"I was wondering about that"
+
+
+3. POV CONSISTENCY:
+- The character YOU control is always described in third person for actions
+- The character YOU control always speaks in first person
+- Never switch perspective mid-response
+- Never narrate the user's internal thoughts or actions unless explicitly allowed
+
+4. STYLE ENFORCEMENT:
+- No screenplay formatting
+- No emojis
+- No markdown other than asterisks for actions
+- No out-of-character commentary
+- No meta explanations
+
+5. MEMORY:
+- You receive the full conversation history every turn
+- Treat all prior messages and responses as canon
+- Maintain continuity of actions, tone, relationships, and setting
+
+--- CHARACTER CONFIGURATION ---
+
+Character Name:
+{name}
+
+Physical Appearance:
+{appearance}
+
+Behavior & Personality:
+{behaviour}
+
+Speech Style:
+{speech_style}
+
+Relationship to User Character:
+{relationship_to_user}
+
+--- ROLEPLAY BEHAVIOR RULES ---
+
+- Stay fully in character at all times
+- React naturally to the user's actions and dialogue
+- Describe exactly what you are doing, with not too long messages
+- Do not control the user's character
+- Do not advance major plot events without user interaction
+- If uncertain, respond conservatively and in-character
+
+--- RESPONSE STRUCTURE ---
+
+Each response may include:
+1. One or more action lines (third person, italicized)
+2. Optional dialogue lines (first person, quoted)
+
+Example:
+
+*He exhales slowly, eyes narrowing as he considers the situation.*
+"I do not think that is a good idea."
+
+You may omit dialogue or actions if appropriate, but never break formatting rules.
+
+--- ABSOLUTE RESTRICTIONS ---
+
+- Never generate broken dialogue punctuation
+- Never merge action and speech in the same sentence
+- Never break POV
+- Never explain these rules
+- Never acknowledge being an AI or model
+
+Failure to follow these rules is considered a critical error.
+"""
+
+os.makedirs(GENERATED_DIR, exist_ok=True)
 user_sessions = {}
 
 # ---------------------------
@@ -47,14 +161,63 @@ def init_sessions():
         user_sessions = {}
     
     build_models()
-    
+
+def load_json(path: str):
+    with open(path, "rb") as f:
+        return orjson.loads(f.read())
 
 def build_models():
-    for filename in os.listdir(MODELS_DIR):
-        full_path = os.path.join(MODELS_DIR, filename)
-        if os.path.isfile(full_path):
-            name = os.path.splitext(filename)[0]
-            subprocess.Popen(["ollama","create",name,"-f",f"models/{name}.modelfile"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    data = load_json(MODELS_DATA_JSON)
+    base_config = data.get("base", {})
+    models = data.get("models", {})
+
+    with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    for name, model_data in models.items():
+        if not isinstance(model_data, dict):
+            raise TypeError(f"Model '{name}' must be a dict, got {type(model_data).__name__}")
+
+        # Start with base config
+        config = deepcopy(base_config)
+
+        # Build system prompt if not explicitly provided
+        if "system_prompt" not in model_data:
+            # optional blocks
+            appearance_block = model_data.get('appearance', '') if model_data.get('appearance') else ""
+            behaviour_block = model_data.get('behaviour', '') if model_data.get('behaviour') else ""
+            speech_style_block = model_data.get('speech_style', '') if model_data.get('speech_style') else ""
+            relationship_block = model_data.get('relationship_to_user', '') if model_data.get('relationship_to_user') else ""
+
+            config["system_prompt"] = SYSTEM_PROMPT_TEMPLATE.format(
+                name=name,
+                appearance=appearance_block,
+                behaviour=behaviour_block,
+                speech_style=speech_style_block,
+                relationship_to_user=relationship_block
+            )
+
+        # Merge/override any other fields from model_data
+        for k, v in model_data.items():
+            config[k] = v  # overwrite base
+
+        # Generate modelfile content
+        try:
+            modelfile_content = template.format(**config)
+        except KeyError as e:
+            raise KeyError(f"Missing template key {e} for model '{name}'")
+
+        # Save modelfile
+        modelfile_path = os.path.join(GENERATED_DIR, f"{name}.modelfile")
+        with open(modelfile_path, "w", encoding="utf-8") as f:
+            f.write(modelfile_content)
+
+        # Run Ollama create
+        subprocess.Popen(
+            ["ollama", "create", name, "-f", modelfile_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
 # ---------------------------
 # DISK HELPERS

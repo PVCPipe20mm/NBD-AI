@@ -1,5 +1,6 @@
 active_chats/
 archived_chats/
+models/generated/
 __pycache__/
 
 bug_reports.txt

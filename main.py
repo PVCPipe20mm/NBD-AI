@@ -1,5 +1,9 @@
-import discord, asyncio, json, logging, support, subprocess
+import asyncio, json, logging, support, subprocess, sys
 from discord.ext import commands
+
+try: import discord
+except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", "discord"])
+
 
 logging.basicConfig(level=logging.INFO)
 intents = discord.Intents.default()
@@ -15,7 +19,7 @@ async def on_ready():
         print("Error loading:",e)
     else:
         print("Loaded",len(comm),"slash commands")
-    await support.log("[INFO] Started Los Pizdatos")
+    await support.log("[INFO] Started NBD AI")
 
 async def load_cogs():
     await bot.load_extension("cogs.Chat")

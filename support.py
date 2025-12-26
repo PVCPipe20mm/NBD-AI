@@ -1,7 +1,12 @@
-import os, AI, aiofiles, orjson, enum
+import os, AI, aiofiles, orjson, enum, subprocess, sys
 from datetime import datetime
 from discord import ButtonStyle, Interaction, Embed, TextStyle, Color, File
 from discord.ui import View, button, Modal, TextInput, Button
+
+try: import aiofiles
+except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", "aiofiles"])
+try: import orjson
+except ImportError: subprocess.check_call([sys.executable, "-m", "pip", "install", "orjson"])
 
 base_path = os.path.dirname(os.path.abspath(__file__))
 logs_file = os.path.join(base_path, "logs.txt")
@@ -12,6 +17,7 @@ sessions_db_file = os.path.join(base_path, "sessions_db.json")
 model_concepts_file = os.path.join(base_path, "models_concepts.json")
 models_file = os.path.join(base_path, "models.json")
 
+app_install_url = "https://discord.com/oauth2/authorize?client_id=1438618313709064404"
 
 # ============================
 #          FUNCTIONS         
@@ -511,7 +517,7 @@ class Share_Bot(View):
     async def confirm(self, interaction: Interaction, button: Button):
         await interaction.response.defer()
         await interaction.followup.send(embed=Embed(title=f"{interaction.user.display_name} shared the bot with you!",
-                                        description="To use this bot, you can either click the Install Bot button (or use the installation link) below, or access it through the bot's profile.\n\nInstallation link:\n`https://discord.com/oauth2/authorize?client_id=1444636160378011669`",
+                                        description=f"To use this bot, you can either click the Install Bot button (or use the installation link) below, or access it through the bot's profile.\n\nInstallation link:\n`{app_install_url}`",
                                         color=Color.blue()),view=Install_View())
         await log(f"[ACTION] {interaction.user.name} shared bot")
         
@@ -522,7 +528,7 @@ class Install_View(View):
         install_button = Button(
             label="Install Bot",
             style=ButtonStyle.link,
-            url="https://discord.com/oauth2/authorize?client_id=1444636160378011669",
+            url=app_install_url,
             row=0
         )
         self.add_item(install_button)
